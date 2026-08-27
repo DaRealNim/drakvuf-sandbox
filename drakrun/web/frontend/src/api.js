@@ -2,9 +2,15 @@ import axios from "axios";
 
 axios.defaults.baseURL = "/api";
 
-export async function getAnalysisList({ abortController }) {
+export async function getAnalysisList({
+    state = "queued",
+    page = 1,
+    limit = 50,
+    abortController,
+}) {
     const listRequest = await axios.get("/list", {
-        signal: abortController.signal,
+        params: { state, page, limit },
+        signal: abortController?.signal,
     });
     return listRequest.data;
 }
