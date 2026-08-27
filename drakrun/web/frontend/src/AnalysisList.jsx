@@ -6,6 +6,9 @@ import { AnalysisStatusBadge } from "./AnalysisStatusBadge.jsx";
 import { AnalysisPriorityBadge } from "./AnalysisPriorityBadge.jsx";
 import { formatDate } from "./formatUtils.js";
 
+const STATES = ["queued", "started", "finished"];
+const PAGE_SIZE = 50;
+
 function AnalysisListRow({ analysis }) {
     return (
         <tr>
@@ -34,15 +37,17 @@ function AnalysisListRow({ analysis }) {
     );
 }
 
-function AnalysisListTable() {
+function AnalysisListTable({ state, page, onTotalChange }) {
     const [error, setError] = useState();
     const [analysisList, setAnalysisList] = useState();
 
     useEffect(() => {
         const abortController = new AbortController();
-        getAnalysisList({ abortController })
+        setAnalysisList(undefined);
+        getAnalysisList({ state, page, limit: PAGE_SIZE, abortController })
             .then((response) => {
-                setAnalysisList(response);
+                setAnalysisList(response.items);
+                onTotalChange(response.total);
             })
             .catch((error) => {
                 if (!(error instanceof CanceledError)) {
@@ -53,7 +58,7 @@ function AnalysisListTable() {
         return () => {
             abortController.abort();
         };
-    }, []);
+    }, [state, page]);
 
     if (typeof error !== "undefined") {
         return <div>Error: {error.toString()}</div>;
@@ -64,9 +69,7 @@ function AnalysisListTable() {
     }
 
     if (analysisList.length === 0) {
-        return (
-            <div>There are no analyses. Upload sample to create a new one.</div>
-        );
+        return <div>There are no analyses in this view.</div>;
     }
 
     return (
@@ -94,10 +97,60 @@ function AnalysisListTable() {
 }
 
 export default function AnalysisList() {
+    const [state, setState] = useState("queued");
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    const switchState = (newState) => {
+        setState(newState);
+        setPage(1);
+    };
+
     return (
         <div className="container-fluid px-4">
             <h1 className="m-4 h4">Analyses</h1>
-            <AnalysisListTable />
+            <ul className="nav nav-tabs mb-3">
+                {STATES.map((s) => (
+                    <li className="nav-item" key={s}>
+                        <button
+                            type="button"
+                            className={
+                                "nav-link" + (state === s ? " active" : "")
+                            }
+                            onClick={() => switchState(s)}
+                        >
+                            {s.charAt(0).toUpperCase() + s.slice(1)}
+                        </button>
+                    </li>
+                ))}
+            </ul>
+            <AnalysisListTable
+                state={state}
+                page={page}
+                onTotalChange={setTotal}
+            />
+            <div className="d-flex align-items-center justify-content-between mt-3">
+                <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => p - 1)}
+                >
+                    Previous
+                </button>
+                <span>
+                    Page {page} of {totalPages}
+                </span>
+                <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => p + 1)}
+                >
+                    Next
+                </button>
+            </div>
         </div>
     );
 }

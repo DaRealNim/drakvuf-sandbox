@@ -1,8 +1,8 @@
 import uuid
-from typing import Annotated, List, Optional
+from typing import Annotated, List, Literal, Optional
 
 from flask_openapi3 import FileStorage
-from pydantic import AfterValidator, BaseModel, Field, RootModel
+from pydantic import AfterValidator, BaseModel, Field
 
 from drakrun.analyzer.analysis_options import JobPriority, StartMethod
 
@@ -54,6 +54,7 @@ class UploadAnalysisResponse(BaseModel):
 class AnalysisResponse(BaseModel):
     id: str = Field(description="Unique analysis ID")
     status: str = Field(description="Analysis status")
+    priority: Optional[str] = Field(default=None, description="Job priority")
     time_started: Optional[str] = Field(
         default=None, description="Analysis start time in ISO format"
     )
@@ -62,7 +63,19 @@ class AnalysisResponse(BaseModel):
     )
 
 
-AnalysisListResponse = RootModel[List[AnalysisResponse]]
+class AnalysisListQuery(BaseModel):
+    state: Literal["queued", "started", "finished"] = Field(
+        default="queued", description="Analysis state to list"
+    )
+    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
+    limit: int = Field(default=50, ge=1, le=200, description="Items per page")
+
+
+class AnalysisListResponse(BaseModel):
+    items: List[AnalysisResponse]
+    total: int = Field(description="Total number of analyses in this state")
+    page: int = Field(description="Current page number")
+    limit: int = Field(description="Items per page")
 
 
 class AnalysisRequestPath(BaseModel):

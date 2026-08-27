@@ -2,12 +2,11 @@ import datetime
 import logging
 import shutil
 import socket
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from redis import Redis
 from rq import Queue, Worker, get_current_job
-from rq.exceptions import InvalidJobOperation
-from rq.job import Job, JobStatus
+from rq.job import Job
 
 from drakrun.lib.config import RedisConfigSection, load_config
 from drakrun.lib.paths import ANALYSES_DIR, UPLOADS_DIR
@@ -27,6 +26,7 @@ ANALYSIS_QUEUE_NAMES = {
     "normal": "drakrun-analysis-normal",
     "low": "drakrun-analysis-low",
 }
+ANALYSIS_HISTORY_KEY = "drakrun-analysis-history"
 _WORKER_VM_ID: Optional[int] = None
 
 logger = logging.getLogger(__name__)
@@ -152,11 +152,11 @@ def worker_analyze(options: AnalysisOptions):
         file_handler.close()
 
         metadata.status = "finished" if job_success else "failed"
-        metadata.time_finished = datetime.datetime.now(
-            datetime.timezone.utc
-        ).isoformat()
+        finished_at = datetime.datetime.now(datetime.timezone.utc)
+        metadata.time_finished = finished_at.isoformat()
         job.meta["time_finished"] = metadata.time_finished
         job.save_meta()
+        job.connection.zadd(ANALYSIS_HISTORY_KEY, {job.id: finished_at.timestamp()})
 
         metadata.store_to_file(metadata_file)
         options.host_sample_path.unlink()
@@ -206,34 +206,58 @@ def enqueue_analysis(
     )
 
 
-def get_analyses_list(connection: Redis) -> List[Job]:
-    jobs = []
+def get_queued_analyses(
+    connection: Redis, offset: int = 0, limit: int = 50
+) -> Tuple[List[Job], int]:
+    # Queues are listed high -> low, so pagination naturally follows dispatch order.
+    queues = [Queue(name=name, connection=connection) for name in ANALYSIS_QUEUE_NAMES.values()]
+    total = sum(queue.count for queue in queues)
+
+    jobs: List[Job] = []
+    remaining_offset = offset
+    remaining_limit = limit
+    for queue in queues:
+        if remaining_limit <= 0:
+            break
+        queue_count = queue.count
+        if remaining_offset >= queue_count:
+            remaining_offset -= queue_count
+            continue
+        take = min(remaining_limit, queue_count - remaining_offset)
+        jobs.extend(queue.get_jobs(offset=remaining_offset, length=take))
+        remaining_offset = 0
+        remaining_limit -= take
+    return jobs, total
+
+
+def get_started_analyses(
+    connection: Redis, offset: int = 0, limit: int = 50
+) -> Tuple[List[Job], int]:
+    # Bounded by worker count, so fetching everything and sorting in Python is cheap.
+    jobs: List[Job] = []
     for queue_name in ANALYSIS_QUEUE_NAMES.values():
         queue = Queue(name=queue_name, connection=connection)
-        jobs.extend(queue.get_jobs())
-        for job_registry in [
-            queue.started_job_registry,
-            queue.finished_job_registry,
-            queue.failed_job_registry,
-        ]:
-            job_ids = job_registry.get_job_ids()
-            jobs.extend(
-                [
-                    job
-                    for job in Job.fetch_many(job_ids, connection=connection)
-                    if job is not None
-                ]
-            )
-    return sorted(jobs, key=lambda job: job.enqueued_at, reverse=True)
+        job_ids = queue.started_job_registry.get_job_ids()
+        jobs.extend(
+            job
+            for job in Job.fetch_many(job_ids, connection=connection)
+            if job is not None
+        )
+    jobs.sort(key=lambda job: job.started_at or job.enqueued_at, reverse=True)
+    return jobs[offset : offset + limit], len(jobs)
 
 
-def truncate_analysis_list(connection: Redis, limit: int) -> None:
-    jobs_to_truncate = get_analyses_list(connection=connection)[limit:]
-    for job in jobs_to_truncate:
-        try:
-            status = job.get_status()
-        except InvalidJobOperation:
-            # Already deleted?
-            continue
-        if status in [JobStatus.FINISHED, JobStatus.FAILED]:
-            job.delete()
+def get_finished_analyses(
+    connection: Redis, offset: int = 0, limit: int = 50
+) -> Tuple[List[Job], int]:
+    total = connection.zcard(ANALYSIS_HISTORY_KEY)
+    job_ids = [
+        job_id.decode() if isinstance(job_id, bytes) else job_id
+        for job_id in connection.zrevrange(
+            ANALYSIS_HISTORY_KEY, offset, offset + limit - 1
+        )
+    ]
+    jobs = [
+        job for job in Job.fetch_many(job_ids, connection=connection) if job is not None
+    ]
+    return jobs, total

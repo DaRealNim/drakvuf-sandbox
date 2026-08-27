@@ -18,15 +18,17 @@ from drakrun.analyzer.postprocessing.process_tree import tree_from_dict
 from drakrun.analyzer.worker import (
     analysis_job_to_metadata,
     enqueue_analysis,
-    get_analyses_list,
+    get_finished_analyses,
+    get_queued_analyses,
     get_redis_connection,
-    truncate_analysis_list,
+    get_started_analyses,
 )
 from drakrun.lib.config import load_config
 from drakrun.lib.paths import UPLOADS_DIR
 from drakrun.lib.s3_storage import get_s3_client, is_s3_enabled, upload_sample_to_s3
 from drakrun.web.schema import (
     AnalysisFileRequestQuery,
+    AnalysisListQuery,
     AnalysisListResponse,
     AnalysisRequestPath,
     AnalysisResponse,
@@ -49,7 +51,6 @@ from drakrun.web.storage import (
     send_analysis_file,
 )
 
-ANALYSES_LIST_MAX_LENGTH = 100
 api = APIBlueprint("api", __name__, url_prefix="/api")
 
 config = load_config()
@@ -141,7 +142,6 @@ def upload_sample(form: UploadFileForm):
         tmp_upload_path.unlink(missing_ok=True)
         raise
 
-    truncate_analysis_list(connection=redis, limit=ANALYSES_LIST_MAX_LENGTH)
     return jsonify({"task_uid": job_id})
 
 
@@ -186,10 +186,21 @@ def karton_results_upload(path: KartonResultsUploadPath, form: KartonResultsUplo
 
 
 @api.get("/list", responses={200: AnalysisListResponse})
-def list_analyses():
-    analysis_list = get_analyses_list(connection=redis)
+def list_analyses(query: AnalysisListQuery):
+    offset = (query.page - 1) * query.limit
+    get_analyses = {
+        "queued": get_queued_analyses,
+        "started": get_started_analyses,
+        "finished": get_finished_analyses,
+    }[query.state]
+    jobs, total = get_analyses(connection=redis, offset=offset, limit=query.limit)
     return jsonify(
-        [analysis_job_to_metadata(job).store_to_dict() for job in analysis_list]
+        {
+            "items": [analysis_job_to_metadata(job).store_to_dict() for job in jobs],
+            "total": total,
+            "page": query.page,
+            "limit": query.limit,
+        }
     )
 
 
