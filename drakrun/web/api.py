@@ -1,5 +1,6 @@
 import logging
 import pathlib
+import shlex
 import uuid
 
 from flask import Response, jsonify, request
@@ -77,6 +78,12 @@ def upload_sample(form: UploadFileForm):
     no_internet = form.no_internet
     no_screenshots = form.no_screenshots
 
+    if form.job_extra_drakvuf_args:
+        try:
+            shlex.split(form.job_extra_drakvuf_args)
+        except ValueError as e:
+            return jsonify({"error": f"Invalid extra drakvuf arguments: {e}"}), 400
+
     UPLOADS_DIR.mkdir(exist_ok=True)
     tmp_upload_path = UPLOADS_DIR / f"{job_id}.sample"
 
@@ -119,6 +126,8 @@ def upload_sample(form: UploadFileForm):
             analysis_options.guest_working_directory = pathlib.PureWindowsPath(
                 form.start_working_dir
             )
+        if form.job_extra_drakvuf_args:
+            analysis_options.job_extra_drakvuf_args = form.job_extra_drakvuf_args
         if form.extract_archive:
             logger.info(
                 f"Archive upload: extract_archive=True, archive_entry_path={form.archive_entry_path}"

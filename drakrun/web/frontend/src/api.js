@@ -135,6 +135,7 @@ export async function uploadSample({
     extract_archive,
     archive_password,
     archive_entry_path,
+    job_extra_drakvuf_args,
 }) {
     const formData = new FormData();
     formData.append("file", file);
@@ -153,6 +154,8 @@ export async function uploadSample({
     if (archive_password) formData.append("archive_password", archive_password);
     if (archive_entry_path)
         formData.append("archive_entry_path", archive_entry_path);
+    if (job_extra_drakvuf_args)
+        formData.append("job_extra_drakvuf_args", job_extra_drakvuf_args);
     const request = await axios.post("/upload", formData, {
         headers: {
             "Content-Type": "multipart/form-data",

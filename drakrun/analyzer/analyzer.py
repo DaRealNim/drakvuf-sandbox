@@ -2,6 +2,7 @@ import enum
 import json
 import logging
 import pathlib
+import shlex
 import subprocess
 from typing import Any, Dict, List, Optional, Protocol
 
@@ -106,7 +107,10 @@ def prepare_drakvuf_args(
         base_args["--syscall-hooks-list"] = syscall_hooks_path.as_posix()
     if options.extra_drakvuf_args is not None:
         base_args.update(options.extra_drakvuf_args)
-    return args_dict_to_list(base_args)
+    args_list = args_dict_to_list(base_args)
+    if options.job_extra_drakvuf_args:
+        args_list.extend(shlex.split(options.job_extra_drakvuf_args))
+    return args_list
 
 
 def drop_sample_to_vm(

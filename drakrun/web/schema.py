@@ -45,6 +45,10 @@ class UploadFileForm(BaseModel):
     archive_password: Optional[str] = Field(
         default=None, description="Archive password"
     )
+    job_extra_drakvuf_args: Optional[str] = Field(
+        default=None,
+        description="Extra arguments appended to the drakvuf command line for this analysis",
+    )
 
 
 class UploadAnalysisResponse(BaseModel):

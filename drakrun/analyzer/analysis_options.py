@@ -41,8 +41,10 @@ class AnalysisOptions(BaseModel):
     job_timeout_leeway: Optional[int] = None
     # networking: Enable Internet access
     net_enable: bool
-    # extra arguments for Drakvuf command line
+    # extra arguments for Drakvuf command line (global/preset config)
     extra_drakvuf_args: Optional[Dict[str, Any]] = None
+    # extra raw arguments string appended to the Drakvuf command line for this specific analysis
+    job_extra_drakvuf_args: Optional[str] = None
     # extra directories to create in output dir
     extra_output_subdirs: Optional[List[str]] = None
     # Don't restore/destroy the VM

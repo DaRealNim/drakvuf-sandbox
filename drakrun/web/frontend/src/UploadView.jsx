@@ -133,6 +133,7 @@ function UploadForm() {
                     extract_archive: form.get("extract_archive"),
                     archive_password: form.get("archive_password"),
                     archive_entry_path: form.get("archive_entry_path"),
+                    job_extra_drakvuf_args: form.get("job_extra_drakvuf_args"),
                 });
                 const jobId = jobData["task_uid"];
                 navigate(`/analysis/${jobId}`);
@@ -364,6 +365,26 @@ function UploadForm() {
                     <FormError
                         errors={formErrors}
                         field="custom-start-working-dir"
+                    />
+                </div>
+                <div className="mb-3">
+                    <label
+                        htmlFor="job-extra-drakvuf-args"
+                        className="form-label"
+                    >
+                        Extra drakvuf arguments
+                        <InfoPopover>
+                            Additional arguments appended to the drakvuf
+                            command line for this analysis only (e.g.{" "}
+                            <code>-v -e explorer.exe</code>).
+                        </InfoPopover>
+                    </label>
+                    <input
+                        type="text"
+                        className="form-control"
+                        id="job-extra-drakvuf-args"
+                        name="job_extra_drakvuf_args"
+                        placeholder="(none)"
                     />
                 </div>
                 <div className="row mb-3">
