@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 from flask_openapi3 import FileStorage
 from pydantic import AfterValidator, BaseModel, Field
@@ -107,6 +107,35 @@ class ProcessLogsRequestPath(AnalysisRequestPath):
 
 class ScreenshotRequestPath(AnalysisRequestPath):
     which: int
+
+
+class CleanupRequestBody(BaseModel):
+    # Unset fields fall back to the configured [cleanup.criteria] defaults.
+    statuses: Optional[List[Literal["finished", "failed"]]] = Field(
+        default=None, description="Statuses to clean up"
+    )
+    priorities: Optional[List[JobPriority]] = Field(
+        default=None, description="Priorities to clean up"
+    )
+    older_than: Optional[int] = Field(
+        default=None, description="Minimum age in seconds (based on time_finished)"
+    )
+    dry_run: bool = Field(
+        default=False, description="Report what would be deleted without deleting it"
+    )
+
+
+class CleanupResponse(BaseModel):
+    dry_run: bool = Field(description="Whether this was a dry run")
+    deleted: Dict[str, int] = Field(description="Number of analyses deleted per status")
+    total_deleted: int = Field(description="Total number of analyses deleted")
+    unknown_priority_skipped: int = Field(
+        description="Matching analyses skipped because their priority could not be determined"
+    )
+    orphaned_skipped: int = Field(
+        description="History entries skipped because their status could not be determined at all"
+    )
+    errors: List[str] = Field(description="Per-analysis errors encountered during cleanup")
 
 
 class KartonResultsUploadForm(BaseModel):

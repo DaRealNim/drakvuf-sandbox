@@ -101,6 +101,23 @@ def download_analysis(
     logger.info("Analysis %s downloaded successfully", analysis_id)
 
 
+def delete_analysis_from_s3(
+    analysis_id: str, s3_client: BaseClient, s3_bucket: str
+) -> None:
+    s3_name_prefix = "/".join([*analysis_id[0:4], analysis_id])
+    logger.info("Deleting analysis %s from S3...", analysis_id)
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=s3_bucket, Prefix=s3_name_prefix + "/"):
+        objects = page.get("Contents", [])
+        if not objects:
+            continue
+        s3_client.delete_objects(
+            Bucket=s3_bucket,
+            Delete={"Objects": [{"Key": obj["Key"]} for obj in objects]},
+        )
+    logger.info("Analysis %s deleted from S3", analysis_id)
+
+
 def is_analysis_on_s3(analysis_id: str, s3_client: BaseClient, s3_bucket: str) -> bool:
     s3_name = "/".join([*analysis_id[:4], analysis_id, "metadata.json"])
 

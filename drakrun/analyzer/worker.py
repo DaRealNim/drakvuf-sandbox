@@ -2,13 +2,16 @@ import datetime
 import logging
 import shutil
 import socket
+import threading
+import time
 from typing import List, Optional, Tuple
 
+from croniter import croniter
 from redis import Redis
 from rq import Queue, Worker, get_current_job
 from rq.job import Job
 
-from drakrun.lib.config import RedisConfigSection, load_config
+from drakrun.lib.config import DrakrunConfig, RedisConfigSection, load_config
 from drakrun.lib.paths import ANALYSES_DIR, UPLOADS_DIR
 
 from ..lib.s3_storage import (
@@ -28,6 +31,10 @@ ANALYSIS_QUEUE_NAMES = {
 }
 ANALYSIS_HISTORY_KEY = "drakrun-analysis-history"
 _WORKER_VM_ID: Optional[int] = None
+
+# Scheduled cleanup runs only inside this worker. If worker 1 is down (e.g. restoring),
+# scheduled cleanup is paused until it comes back
+CLEANUP_SCHEDULER_VM_ID = 1
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +118,7 @@ def worker_analyze(options: AnalysisOptions):
         time_started=job.started_at.isoformat(),
         vm_id=vm_id,
         file=file_metadata,
+        priority=job.meta.get("priority"),
     )
     metadata_file = output_dir / "metadata.json"
     metadata.store_to_file(metadata_file)
@@ -166,11 +174,49 @@ def worker_analyze(options: AnalysisOptions):
                 shutil.rmtree(output_dir)
 
 
+def _run_cleanup_scheduler(config: DrakrunConfig) -> None:
+    # Imported lazily to avoid a circular import (cleanup.py imports
+    # ANALYSIS_HISTORY_KEY from this module).
+    from .cleanup import perform_cleanup
+
+    redis = get_redis_connection(config.redis)
+    cron = croniter(config.cleanup.schedule, datetime.datetime.now())
+    while True:
+        next_run = cron.get_next(float)
+        time.sleep(max(0.0, next_run - time.time()))
+        try:
+            report = perform_cleanup(redis, config.s3, config.cleanup.criteria)
+            logger.info("Scheduled cleanup finished: %s", report.to_dict())
+        except Exception:
+            logger.exception("Scheduled cleanup run failed")
+
+
+def _maybe_start_cleanup_scheduler(vm_id: int, config: DrakrunConfig) -> None:
+    if vm_id != CLEANUP_SCHEDULER_VM_ID:
+        return
+    if not config.cleanup.enabled or not config.cleanup.schedule:
+        return
+    thread = threading.Thread(
+        target=_run_cleanup_scheduler,
+        args=(config,),
+        name="drakrun-cleanup-scheduler",
+        daemon=True,
+    )
+    thread.start()
+    logger.info(
+        "Started scheduled cleanup thread on vm-%d (schedule=%s)",
+        vm_id,
+        config.cleanup.schedule,
+    )
+
+
 def worker_main(vm_id: int):
     global _WORKER_VM_ID
     _WORKER_VM_ID = vm_id
     config = load_config()
     hostname = config.drakrun.worker_hostname or socket.gethostname()
+
+    _maybe_start_cleanup_scheduler(vm_id, config)
 
     worker = Worker(
         queues=list(ANALYSIS_QUEUE_NAMES.values()),

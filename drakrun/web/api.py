@@ -10,6 +10,7 @@ from rq.job import Job, JobStatus
 
 from drakrun.analyzer.analysis_metadata import AnalysisMetadata, FileMetadata
 from drakrun.analyzer.analysis_options import AnalysisOptions
+from drakrun.analyzer.cleanup import perform_cleanup
 from drakrun.analyzer.postprocessing.indexer import (
     get_log_index_for_process,
     get_plugin_names_for_process,
@@ -24,7 +25,7 @@ from drakrun.analyzer.worker import (
     get_redis_connection,
     get_started_analyses,
 )
-from drakrun.lib.config import load_config
+from drakrun.lib.config import CleanupCriteriaSection, load_config
 from drakrun.lib.paths import UPLOADS_DIR
 from drakrun.lib.s3_storage import get_s3_client, is_s3_enabled, upload_sample_to_s3
 from drakrun.web.schema import (
@@ -34,6 +35,8 @@ from drakrun.web.schema import (
     AnalysisRequestPath,
     AnalysisResponse,
     APIErrorResponse,
+    CleanupRequestBody,
+    CleanupResponse,
     KartonResultsUploadForm,
     KartonResultsUploadPath,
     KartonResultsUploadResponse,
@@ -211,6 +214,35 @@ def list_analyses(query: AnalysisListQuery):
             "limit": query.limit,
         }
     )
+
+
+@api.post("/cleanup", responses={200: CleanupResponse})
+def cleanup(body: CleanupRequestBody):
+    """
+    Immediately clean up finished/failed analyses (Redis job data + result
+    files) matching the given criteria. Unset fields fall back to the
+    configured [cleanup.criteria] defaults. Queued and started analyses are
+    never affected.
+    """
+    criteria = CleanupCriteriaSection(
+        statuses=(
+            body.statuses
+            if body.statuses is not None
+            else config.cleanup.criteria.statuses
+        ),
+        priorities=(
+            body.priorities
+            if body.priorities is not None
+            else config.cleanup.criteria.priorities
+        ),
+        older_than=(
+            body.older_than
+            if body.older_than is not None
+            else config.cleanup.criteria.older_than
+        ),
+    )
+    report = perform_cleanup(redis, config.s3, criteria, dry_run=body.dry_run)
+    return jsonify(report.to_dict())
 
 
 @api.get("/status/<task_uid>", responses={200: AnalysisResponse, 404: APIErrorResponse})

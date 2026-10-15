@@ -6,7 +6,7 @@ from typing import Any, Optional
 import magic
 from pydantic import BaseModel, ConfigDict
 
-from drakrun.analyzer.analysis_options import AnalysisOptions
+from drakrun.analyzer.analysis_options import AnalysisOptions, JobPriority
 
 
 class FileMetadata(BaseModel):
@@ -42,6 +42,8 @@ class AnalysisMetadata(BaseModel):
     time_execution_started: Optional[str] = None
     # Status of the job
     status: Optional[str] = None
+    # Job priority
+    priority: Optional[JobPriority] = None
     # Detailed status (doesn't occur in metadata.json)
     substatus: Optional[str] = None
     # Guest VM id where sample was executed

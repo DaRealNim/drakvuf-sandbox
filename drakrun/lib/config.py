@@ -1,5 +1,5 @@
 import pathlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import (
@@ -109,6 +109,21 @@ class KartonConfigSection(BaseModel):
     poll_interval: int = 10
 
 
+class CleanupCriteriaSection(BaseModel):
+    # Only finished/failed analyses are eligible for cleanup
+    statuses: List[Literal["finished", "failed"]] = Field(default_factory=list)
+    priorities: List[Literal["low", "normal", "high"]] = Field(default_factory=list)
+    # Minimum age (seconds, based on time_finished) for an analysis to be eligible
+    older_than: Optional[int] = None
+
+
+class CleanupConfigSection(BaseModel):
+    enabled: bool = False
+    # Cron expression (e.g. "0 */6 * * *"); only used when enabled is True
+    schedule: Optional[str] = None
+    criteria: CleanupCriteriaSection = CleanupCriteriaSection()
+
+
 class DrakrunConfig(BaseSettings):
     model_config = SettingsConfigDict(
         extra="allow",
@@ -123,6 +138,7 @@ class DrakrunConfig(BaseSettings):
     capa: CapaConfigSection = CapaConfigSection()
     memdump: MemdumpConfigSection = MemdumpConfigSection()
     karton: KartonConfigSection = KartonConfigSection()
+    cleanup: CleanupConfigSection = CleanupConfigSection()
     s3: Optional[S3StorageConfigSection] = None
     preset: Dict[str, DrakrunDefaultsPresetSection] = Field(default_factory=dict)
 
