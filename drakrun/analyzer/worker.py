@@ -177,7 +177,7 @@ def worker_analyze(options: AnalysisOptions):
 def _run_cleanup_scheduler(config: DrakrunConfig) -> None:
     # Imported lazily to avoid a circular import (cleanup.py imports
     # ANALYSIS_HISTORY_KEY from this module).
-    from .cleanup import perform_cleanup
+    from .cleanup import try_run_cleanup
 
     redis = get_redis_connection(config.redis)
     cron = croniter(config.cleanup.schedule, datetime.datetime.now())
@@ -185,8 +185,13 @@ def _run_cleanup_scheduler(config: DrakrunConfig) -> None:
         next_run = cron.get_next(float)
         time.sleep(max(0.0, next_run - time.time()))
         try:
-            report = perform_cleanup(redis, config.s3, config.cleanup.criteria)
-            logger.info("Scheduled cleanup finished: %s", report.to_dict())
+            report = try_run_cleanup(redis, config.s3, config.cleanup.criteria)
+            if report is None:
+                logger.info(
+                    "Scheduled cleanup skipped: a cleanup is already in progress"
+                )
+            else:
+                logger.info("Scheduled cleanup finished: %s", report.to_dict())
         except Exception:
             logger.exception("Scheduled cleanup run failed")
 

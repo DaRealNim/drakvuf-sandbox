@@ -19,6 +19,12 @@ from .worker import ANALYSIS_HISTORY_KEY
 
 logger = logging.getLogger(__name__)
 
+# Cross-process lock (web workers + the vm-1 scheduler thread all share one
+# Redis instance) so a manual trigger and the scheduled run never execute
+# concurrently. TTL is a safety net in case a run dies without releasing it.
+CLEANUP_LOCK_KEY = "drakrun-cleanup-lock"
+CLEANUP_LOCK_TTL = 3600
+
 _JOB_STATUS_TO_CLEANUP_STATUS = {
     JobStatus.FINISHED: "finished",
     JobStatus.FAILED: "failed",
@@ -190,3 +196,22 @@ def perform_cleanup(
         report.deleted[candidate.status] = report.deleted.get(candidate.status, 0) + 1
 
     return report
+
+
+def try_run_cleanup(
+    redis: Redis,
+    s3_config: Optional[S3StorageConfigSection],
+    criteria: CleanupCriteriaSection,
+    dry_run: bool = False,
+) -> Optional[CleanupReport]:
+    """
+    Like perform_cleanup, but first acquires CLEANUP_LOCK_KEY so a manual
+    trigger and the scheduled run can't execute at the same time. Returns
+    None (without doing anything) if a cleanup is already in progress.
+    """
+    if not redis.set(CLEANUP_LOCK_KEY, "1", nx=True, ex=CLEANUP_LOCK_TTL):
+        return None
+    try:
+        return perform_cleanup(redis, s3_config, criteria, dry_run=dry_run)
+    finally:
+        redis.delete(CLEANUP_LOCK_KEY)

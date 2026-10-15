@@ -1,6 +1,7 @@
 import logging
 import pathlib
 import shlex
+import threading
 import uuid
 
 from flask import Response, jsonify, request
@@ -10,7 +11,7 @@ from rq.job import Job, JobStatus
 
 from drakrun.analyzer.analysis_metadata import AnalysisMetadata, FileMetadata
 from drakrun.analyzer.analysis_options import AnalysisOptions
-from drakrun.analyzer.cleanup import perform_cleanup
+from drakrun.analyzer.cleanup import CLEANUP_LOCK_KEY, try_run_cleanup
 from drakrun.analyzer.postprocessing.indexer import (
     get_log_index_for_process,
     get_plugin_names_for_process,
@@ -35,8 +36,8 @@ from drakrun.web.schema import (
     AnalysisRequestPath,
     AnalysisResponse,
     APIErrorResponse,
+    CleanupAcceptedResponse,
     CleanupRequestBody,
-    CleanupResponse,
     KartonResultsUploadForm,
     KartonResultsUploadPath,
     KartonResultsUploadResponse,
@@ -216,14 +217,23 @@ def list_analyses(query: AnalysisListQuery):
     )
 
 
-@api.post("/cleanup", responses={200: CleanupResponse})
+@api.post(
+    "/cleanup", responses={202: CleanupAcceptedResponse, 409: APIErrorResponse}
+)
 def cleanup(body: CleanupRequestBody):
     """
-    Immediately clean up finished/failed analyses (Redis job data + result
+    Trigger cleanup of finished/failed analyses (Redis job data + result
     files) matching the given criteria. Unset fields fall back to the
     configured [cleanup.criteria] defaults. Queued and started analyses are
     never affected.
+
+    Runs in the background - a bulk delete can take far longer than an HTTP
+    request should block for - so this returns immediately. The report is
+    logged by the drakrun-web process once the run finishes.
     """
+    if redis.exists(CLEANUP_LOCK_KEY):
+        return jsonify({"error": "A cleanup is already in progress"}), 409
+
     criteria = CleanupCriteriaSection(
         statuses=(
             body.statuses
@@ -241,8 +251,19 @@ def cleanup(body: CleanupRequestBody):
             else config.cleanup.criteria.older_than
         ),
     )
-    report = perform_cleanup(redis, config.s3, criteria, dry_run=body.dry_run)
-    return jsonify(report.to_dict())
+
+    def _run():
+        try:
+            report = try_run_cleanup(redis, config.s3, criteria, dry_run=body.dry_run)
+            if report is None:
+                logger.info("Manual cleanup skipped: already in progress")
+            else:
+                logger.info("Manual cleanup finished: %s", report.to_dict())
+        except Exception:
+            logger.exception("Manual cleanup failed")
+
+    threading.Thread(target=_run, name="drakrun-manual-cleanup", daemon=True).start()
+    return jsonify({"status": "accepted"}), 202
 
 
 @api.get("/status/<task_uid>", responses={200: AnalysisResponse, 404: APIErrorResponse})
