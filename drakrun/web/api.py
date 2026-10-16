@@ -38,6 +38,7 @@ from drakrun.web.schema import (
     APIErrorResponse,
     CleanupAcceptedResponse,
     CleanupRequestBody,
+    CleanupResponse,
     KartonResultsUploadForm,
     KartonResultsUploadPath,
     KartonResultsUploadResponse,
@@ -218,7 +219,12 @@ def list_analyses(query: AnalysisListQuery):
 
 
 @api.post(
-    "/cleanup", responses={202: CleanupAcceptedResponse, 409: APIErrorResponse}
+    "/cleanup",
+    responses={
+        200: CleanupResponse,
+        202: CleanupAcceptedResponse,
+        409: APIErrorResponse,
+    },
 )
 def cleanup(body: CleanupRequestBody):
     """
@@ -227,9 +233,10 @@ def cleanup(body: CleanupRequestBody):
     configured [cleanup.criteria] defaults. Queued and started analyses are
     never affected.
 
-    Runs in the background - a bulk delete can take far longer than an HTTP
-    request should block for - so this returns immediately. The report is
-    logged by the drakrun-web process once the run finishes.
+    dry_run=True is read-only (no deletes) and runs synchronously, returning
+    the full report. Otherwise a real bulk delete can take far longer than an
+    HTTP request should block for, so it runs in the background and returns
+    immediately; the report is logged by the drakrun-web process once done.
     """
     if redis.exists(CLEANUP_LOCK_KEY):
         return jsonify({"error": "A cleanup is already in progress"}), 409
@@ -252,9 +259,15 @@ def cleanup(body: CleanupRequestBody):
         ),
     )
 
+    if body.dry_run:
+        report = try_run_cleanup(redis, config.s3, criteria, dry_run=True)
+        if report is None:
+            return jsonify({"error": "A cleanup is already in progress"}), 409
+        return jsonify(report.to_dict())
+
     def _run():
         try:
-            report = try_run_cleanup(redis, config.s3, criteria, dry_run=body.dry_run)
+            report = try_run_cleanup(redis, config.s3, criteria, dry_run=False)
             if report is None:
                 logger.info("Manual cleanup skipped: already in progress")
             else:

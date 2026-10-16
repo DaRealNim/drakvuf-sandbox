@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 from flask_openapi3 import FileStorage
 from pydantic import AfterValidator, BaseModel, Field
@@ -130,6 +130,23 @@ class CleanupAcceptedResponse(BaseModel):
         default="accepted",
         description="Cleanup runs in the background; check the drakrun-web log for the report",
     )
+
+
+class CleanupResponse(BaseModel):
+    # Only ever returned for dry_run=True, which is read-only (no deletes),
+    # so it's run synchronously instead of going through the 202 path.
+    dry_run: bool = Field(description="Whether this was a dry run")
+    deleted: Dict[str, int] = Field(
+        description="Number of analyses that would be deleted, per status"
+    )
+    total_deleted: int = Field(description="Total number of analyses that would be deleted")
+    unknown_priority_skipped: int = Field(
+        description="Matching analyses skipped because their priority could not be determined"
+    )
+    orphaned_skipped: int = Field(
+        description="History entries skipped because their status could not be determined at all"
+    )
+    errors: List[str] = Field(description="Per-analysis errors encountered during cleanup")
 
 
 class KartonResultsUploadForm(BaseModel):
